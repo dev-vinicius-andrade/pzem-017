@@ -1,0 +1,100 @@
+# Home Assistant Modbus config for PZEM-017 via the bundled USB-RS485 cable
+# (alternative to the ESP32 firmware). Add to configuration.yaml:
+#
+#   modbus: !include pzem017_modbus.yaml
+#
+# Then restart Home Assistant.
+
+- name: pzem017
+  type: serial
+  # Find the stable path in HA: Settings > System > Hardware > All hardware,
+  # search "ttyUSB" and copy the /dev/serial/by-id/... entry.
+  port: /dev/serial/by-id/REPLACE_WITH_YOUR_USB_RS485_ID
+  baudrate: 9600
+  bytesize: 8
+  method: rtu
+  parity: N
+  stopbits: 2          # PZEM-017 uses 8N2
+  timeout: 3
+
+  sensors:
+    # Input registers (function 0x04)
+    - name: Battery Voltage
+      unique_id: pzem017_voltage
+      slave: 1
+      address: 0
+      input_type: input
+      data_type: uint16
+      scale: 0.01
+      precision: 2
+      unit_of_measurement: V
+      device_class: voltage
+      state_class: measurement
+      scan_interval: 5
+
+    - name: Battery Current
+      unique_id: pzem017_current
+      slave: 1
+      address: 1
+      input_type: input
+      data_type: uint16
+      scale: 0.01
+      precision: 2
+      unit_of_measurement: A
+      device_class: current
+      state_class: measurement
+      scan_interval: 5
+
+    - name: Battery Power
+      unique_id: pzem017_power
+      slave: 1
+      address: 2
+      input_type: input
+      data_type: uint32
+      swap: word           # PZEM sends low word first
+      scale: 0.1
+      precision: 1
+      unit_of_measurement: W
+      device_class: power
+      state_class: measurement
+      scan_interval: 5
+
+    - name: Battery Energy
+      unique_id: pzem017_energy
+      slave: 1
+      address: 4
+      input_type: input
+      data_type: uint32
+      swap: word           # PZEM sends low word first, unit Wh
+      scale: 0.001
+      precision: 3
+      unit_of_measurement: kWh
+      device_class: energy
+      state_class: total_increasing
+      scan_interval: 30
+
+    # Holding registers (function 0x03), read-only here
+    - name: PZEM Shunt Range Code
+      unique_id: pzem017_shunt_range
+      slave: 1
+      address: 3
+      input_type: holding
+      data_type: uint16
+      scan_interval: 300   # 0=100A 1=50A 2=200A 3=300A
+
+  binary_sensors:
+    - name: Battery High Voltage Alarm
+      unique_id: pzem017_high_voltage_alarm
+      slave: 1
+      address: 6
+      input_type: input
+      device_class: problem
+      scan_interval: 10
+
+    - name: Battery Low Voltage Alarm
+      unique_id: pzem017_low_voltage_alarm
+      slave: 1
+      address: 7
+      input_type: input
+      device_class: problem
+      scan_interval: 10

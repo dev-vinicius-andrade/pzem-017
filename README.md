@@ -183,11 +183,47 @@ Holding registers (function `0x03` read, `0x06` write):
 - Voltage-based SoC for lead-acid is only meaningful at rest; voltage sags
   under load.
 
-## Alternative: no ESP32
+## Alternative: USB–RS485 cable straight to Home Assistant (no ESP32)
 
-If the Home Assistant host sits next to the batteries, plug the included
-USB–RS485 cable into it and use the built-in `modbus` integration
-(9600 8N2, slave 1) with the register map above.
+Uses the USB–RS485 cable bundled with the PZEM-017 and Home Assistant's
+built-in `modbus` integration. No extra hardware, but no LCD and readings stop
+when the HA server is off.
+
+### Wiring
+
+![USB-RS485 + network cable wiring](docs/wiring-usb-cable.svg)
+
+RS485 runs fine over long distances, so the USB adapter stays plugged into the
+HA server and a network cable (CAT5/CAT6, used as plain wire, not plugged into
+any switch) runs to the PZEM:
+
+| PZEM-017 | CAT5 wire (suggestion) | USB–RS485 adapter |
+|---|---|---|
+| A | orange | A |
+| B | orange/white | B |
+| 5V | brown | 5V |
+| GND | brown/white | GND |
+
+Keep A and B on the **same twisted pair** — it rejects noise from the inverter.
+If nothing reads at all, swap A and B.
+
+### Home Assistant config
+
+1. Copy `homeassistant/pzem017_modbus.yaml` next to `configuration.yaml`.
+2. Add to `configuration.yaml`:
+   ```yaml
+   modbus: !include pzem017_modbus.yaml
+   ```
+3. Set `port:` to the adapter's `/dev/serial/by-id/...` path
+   (Settings → System → Hardware → All hardware).
+   - HA in a VM: pass the USB device through to the VM first.
+   - HA in Docker: map the device into the container (`--device`).
+4. Restart Home Assistant.
+
+The shunt range is shown read-only as `PZEM Shunt Range Code`
+(0=100 A, 1=50 A, 2=200 A, 3=300 A). To change it, call the
+`modbus.write_register` action with `hub: pzem017`, `slave: 1`,
+`address: 3`, `value: <code>`.
 
 ## Files
 
@@ -198,4 +234,6 @@ USB–RS485 cable into it and use the built-in `modbus` integration
 | `.env.example` | Template for `.env` (`ESP_IP` for OTA updates) |
 | `docs/wiring.svg` / `.png` | Wiring diagram |
 | `docs/gen_wiring.py` | Script that generates the diagram |
+| `docs/wiring-usb-cable.svg` / `.png`, `docs/gen_wiring_usb.py` | Diagram for the USB-RS485 cable option and its generator |
+| `homeassistant/pzem017_modbus.yaml` | HA `modbus` config for the USB–RS485 cable option |
 | `README.md` | This document |
