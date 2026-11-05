@@ -1,0 +1,210 @@
+# ESPHome config: PZEM-017 (DC meter, Modbus RTU over RS485) -> ESP32 -> Home Assistant
+# Battery bank: 2x 12V 75Ah in series (24V nominal)
+#
+# Wiring (ESP32 <-> MAX3485 / 3.3V RS485 module <-> PZEM-017 comm terminal):
+#   ESP32 GPIO17 (TX)  -> module DI
+#   ESP32 GPIO16 (RX)  <- module RO
+#   ESP32 GPIO4        -> module DE + RE (bridged)   [remove flow_control_pin if auto-direction module]
+#   ESP32 3V3 / GND    -> module VCC / GND
+#   module A           -> PZEM A
+#   module B           -> PZEM B
+#   ESP32 5V (VIN)     -> PZEM 5V    (powers PZEM's isolated RS485 side)
+#   ESP32 GND          -> PZEM GND
+#
+# Board: DOIT ESP32 DevKit V1 (labels: RX2=GPIO16, TX2=GPIO17, D4=GPIO4)
+#
+# LCD Winstar WH1602A (HD44780 16x2, parallel, 4-bit mode):
+#   LCD 1 VSS -> GND          LCD 2 VDD -> 5V (VIN)
+#   LCD 3 V0  -> 10k pot wiper (pot ends 5V/GND) for contrast
+#   LCD 4 RS  -> GPIO32 (D32) LCD 5 RW  -> GND (write only)
+#   LCD 6 E   -> GPIO33 (D33) LCD 7-10 D0-D3 -> not connected
+#   LCD 11 D4 -> GPIO25 (D25) LCD 12 D5 -> GPIO26 (D26)
+#   LCD 13 D6 -> GPIO27 (D27) LCD 14 D7 -> GPIO14 (D14)
+#   LCD 15 A  -> 5V (backlight +)   LCD 16 K -> GND
+
+esphome:
+  name: battery-monitor
+  friendly_name: Battery Monitor
+
+esp32:
+  board: esp32doit-devkit-v1
+  framework:
+    type: esp-idf
+
+logger:
+
+api:
+  encryption:
+    key: !secret api_encryption_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+  ap:
+    ssid: "Battery-Monitor Fallback"
+    password: !secret fallback_ap_password
+
+captive_portal:
+
+uart:
+  id: uart_pzem
+  tx_pin: GPIO17
+  rx_pin: GPIO16
+  baud_rate: 9600
+  data_bits: 8
+  parity: NONE
+  stop_bits: 2          # PZEM-017 uses 8N2
+
+modbus:
+  id: modbus_pzem
+  uart_id: uart_pzem
+  flow_control_pin: GPIO4   # DE/RE of MAX3485. Delete this line for auto-direction modules.
+
+modbus_controller:
+  - id: pzem
+    modbus_id: modbus_pzem
+    address: 0x01           # factory default slave address
+    update_interval: 5s
+
+sensor:
+  # Input registers (function 0x04)
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Battery Voltage"
+    id: battery_voltage
+    register_type: read
+    address: 0x0000
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    device_class: voltage
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Battery Current"
+    id: battery_current
+    register_type: read
+    address: 0x0001
+    value_type: U_WORD
+    unit_of_measurement: "A"
+    device_class: current
+    state_class: measurement
+    accuracy_decimals: 2
+    filters:
+      - multiply: 0.01
+
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Battery Power"
+    id: battery_power
+    register_type: read
+    address: 0x0002
+    value_type: U_DWORD_R     # 32-bit, low word first
+    unit_of_measurement: "W"
+    device_class: power
+    state_class: measurement
+    accuracy_decimals: 1
+    filters:
+      - multiply: 0.1
+
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Battery Energy"
+    id: battery_energy
+    register_type: read
+    address: 0x0004
+    value_type: U_DWORD_R     # 32-bit, low word first, unit Wh
+    unit_of_measurement: "kWh"
+    device_class: energy
+    state_class: total_increasing
+    accuracy_decimals: 3
+    filters:
+      - multiply: 0.001
+
+  - platform: wifi_signal
+    name: "WiFi Signal"
+    update_interval: 60s
+
+binary_sensor:
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "High Voltage Alarm"
+    register_type: read
+    address: 0x0006
+    bitmask: 0x0001
+    device_class: problem
+
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Low Voltage Alarm"
+    register_type: read
+    address: 0x0007
+    bitmask: 0x0001
+    device_class: problem
+
+number:
+  # Holding registers (function 0x03 read / 0x06 write). Unit 0.01V.
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "High Voltage Alarm Threshold"
+    address: 0x0000
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    min_value: 5
+    max_value: 350
+    step: 0.1
+    multiply: 100
+    entity_category: config
+
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Low Voltage Alarm Threshold"
+    address: 0x0001
+    value_type: U_WORD
+    unit_of_measurement: "V"
+    min_value: 1
+    max_value: 350
+    step: 0.1
+    multiply: 100
+    entity_category: config
+
+select:
+  # MUST match your shunt rating, otherwise current/power readings are scaled wrong.
+  - platform: modbus_controller
+    modbus_controller_id: pzem
+    name: "Shunt Range"
+    address: 0x0003
+    value_type: U_WORD
+    optionsmap:
+      "100A": 0
+      "50A": 1
+      "200A": 2
+      "300A": 3
+    entity_category: config
+
+display:
+  - platform: lcd_gpio
+    dimensions: 16x2
+    rs_pin: GPIO32
+    enable_pin: GPIO33
+    data_pins:
+      - GPIO25
+      - GPIO26
+      - GPIO27
+      - GPIO14
+    update_interval: 2s
+    lambda: |-
+      // Line 1: voltage + current. Line 2: power + energy.
+      if (isnan(id(battery_voltage).state)) {
+        it.print(0, 0, "Waiting PZEM...");
+        return;
+      }
+      it.printf(0, 0, "%5.2fV %6.2fA", id(battery_voltage).state, id(battery_current).state);
+      it.printf(0, 1, "%6.1fW %5.2fkWh", id(battery_power).state, id(battery_energy).state);
